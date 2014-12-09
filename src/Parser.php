@@ -1,8 +1,6 @@
 <?php
 namespace Raml;
 
-use JsonSchema\Uri\UriRetriever;
-use JsonSchema\RefResolver;
 use Symfony\Component\Yaml\Yaml;
 
 class Parser
@@ -16,6 +14,16 @@ class Parser
     private $cachedFiles = [];
 
     // ---
+
+    /**
+     * @param $schemaParsers
+     */
+    public function __construct($schemaParsers = [])
+    {
+        $this->schemaParsers = [
+          new \Raml\SchemaParser\JsonSchemaParser()
+        ];
+    }
 
     /**
      * Parse a RAML file
@@ -79,17 +87,14 @@ class Parser
 
         // ---
 
+        // parse any inline schemas
         if ($parseSchemas && $array) {
             $array = $this->arrayMapRecursive(
                 function ($data) use ($rootDir) {
-                    if (is_string($data) && $this->isJson($data)) {
-                        $retriever = new UriRetriever;
-                        $jsonSchemaParser = new RefResolver($retriever);
-
-                        $data = json_decode($data);
-                        $jsonSchemaParser->resolve($data, 'file:' . $rootDir . '/');
-
-                        return $data;
+                    foreach ($this->schemaParsers as $schemaParser) {
+                        if ($schemaParser->canParse($data)) {
+                            return $schemaParser->parseString($data, $rootDir);
+                        }
                     }
 
                     return $data;
@@ -100,18 +105,6 @@ class Parser
         }
 
         return new ApiDefinition($array);
-    }
-
-    /**
-     * Checks if a string is JSON
-     *
-     * @param string $string
-     * @return boolean
-     */
-    private function isJson($string)
-    {
-        json_decode($string);
-        return (json_last_error() == JSON_ERROR_NONE);
     }
 
     /**
@@ -145,23 +138,6 @@ class Parser
     }
 
     /**
-     * Convert a JSON Schema file into a stdClass
-     *
-     * @param string $fileName
-     * @return \stdClass
-     */
-    private function parseJsonSchema($fileName)
-    {
-        $retriever = new UriRetriever;
-        $jsonSchemaParser = new RefResolver($retriever);
-        try {
-            return $jsonSchemaParser->fetchRef('file://' . $fileName, null);
-        } catch (\Exception $e) {
-            throw new \Exception('Invalid JSON in ' . $fileName);
-        }
-    }
-
-    /**
      * Load and parse a file
      *
      * @throws \Exception
@@ -184,6 +160,8 @@ class Parser
 
         $fileExtension = (pathinfo($fileName, PATHINFO_EXTENSION));
 
+        $fileData = null;
+
         if (in_array($fileExtension, ['yaml', 'yml', 'raml', 'rml'])) {
             // RAML and YAML files are always parsed
             $fileData = $this->includeAndParseFiles(
@@ -192,13 +170,15 @@ class Parser
                 $parseSchemas
             );
         } elseif ($parseSchemas) {
-            // Determine if we need to parse schemas
-            switch ($fileExtension) {
-                case 'json':
-                    $fileData = $this->parseJsonSchema($fullPath, null);
-                    break;
-                default:
-                    throw new \Exception('Extension "' . $fileExtension . '" not supported (yet)');
+            foreach($this->schemaParsers as $schemaParser) {
+                if($schemaParser->canParseFile($fullPath)) {
+                    $fileData = $schemaParser->parseFile($fullPath);
+                    continue;
+                }
+            }
+
+            if (!$fileData) {
+                throw new \Exception('Extension "' . $fileExtension . '" not supported (yet)');
             }
         } else {
             // Or just include the string
@@ -341,6 +321,7 @@ class Parser
     {
         $jsonString = json_encode($trait, true);
 
+        // replaces <<var>>
         foreach ($values as $key => $value) {
             $jsonString = str_replace('\u003C\u003C' . $key . '\u003E\u003E', $value, $jsonString);
         }
