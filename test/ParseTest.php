@@ -360,4 +360,22 @@ class ParseTest extends PHPUnit_Framework_TestCase
         $def = $this->parser->parse(__DIR__.'/fixture/reservedParameter.raml');
         $this->assertEquals('Get list of songs at /songs', $def->getResourceByUri('/songs')->getMethod('get')->getDescription());
     }
+
+    /** @test */
+    public function shouldCorrectlyHandleQueryParameters()
+    {
+        $def = $this->parser->parse(__DIR__.'/fixture/queryParameters.raml');
+
+        $resource = $def->getResourceByUri('/books/{bookId}');
+        $method = $resource->getMethod('get');
+        $queryParameters = $method->getQueryParameters();
+
+        $this->assertEquals(3, count($queryParameters));
+
+        $this->assertEquals('integer', $queryParameters['page']->getType());
+        $this->assertEquals('Current Page', $queryParameters['page']->getDisplayName());
+        $this->assertNull($queryParameters['page']->getDescription());
+        $this->assertNull($queryParameters['page']->getExample());
+        $this->assertFalse($queryParameters['page']->isRequired());
+    }
 }
